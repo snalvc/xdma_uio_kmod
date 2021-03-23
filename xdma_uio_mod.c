@@ -18,7 +18,17 @@ struct xdma_uio_pci_dev {
   // enum rte_intr_mode mode;
 };
 
-static int xdma_uio_pci_probe(struct pci_dev *dev,
+static void pci_check_intr_pend(struct pci_dev *pdev) {
+  u16 v;
+
+  pci_read_config_word(pdev, PCI_STATUS, &v);
+  if (v & PCI_STATUS_INTERRUPT) {
+    pr_info("%s PCI STATUS Interrupt pending 0x%x.\n", dev_name(&pdev->dev), v);
+    pci_write_config_word(pdev, PCI_STATUS, PCI_STATUS_INTERRUPT);
+  }
+}
+
+static int xdma_uio_pci_probe(struct pci_dev *pdev,
                               const struct pci_device_id *id) {
   struct xdma_uio_pci_dev *udev;
   int rv;
@@ -27,11 +37,27 @@ static int xdma_uio_pci_probe(struct pci_dev *dev,
   if (!udev)
     return -ENOMEM;
 
-  rv = pci_enable_device(dev);
+  rv = pci_enable_device(pdev);
   if (rv != 0) {
     pr_err("Failed to enable PCI device\n");
     goto out_free_udev;
   }
+
+  /* enable bus mastering on the device */
+  pci_set_master(pdev);
+
+  pci_check_intr_pend(pdev);
+
+  /* enable relaxed ordering */
+  pci_enable_capability(pdev, PCI_EXP_DEVCTL_RELAX_EN);
+
+  /* enable extended tag */
+  pci_enable_capability(pdev, PCI_EXP_DEVCTL_EXT_TAG);
+
+  /* force MRRS to be 512 */
+  rv = pcie_set_readrq(pdev, 512);
+  if (rv)
+    pr_info("Failed to set PCI_EXP_DEVCTL_READRQ: %d.\n", rv);
 
   return 0;
 
