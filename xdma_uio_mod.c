@@ -20,7 +20,25 @@ struct xdma_uio_pci_dev {
 
 static int xdma_uio_pci_probe(struct pci_dev *dev,
                               const struct pci_device_id *id) {
+  struct xdma_uio_pci_dev *udev;
+  int rv;
+
+  udev = kzalloc(sizeof(struct xdma_uio_pci_dev), GFP_KERNEL);
+  if (!udev)
+    return -ENOMEM;
+
+  rv = pci_enable_device(dev);
+  if (rv != 0) {
+    pr_err("Failed to enable PCI device\n");
+    goto out_free_udev;
+  }
+
   return 0;
+
+out_free_udev:
+  kfree(udev);
+
+  return rv;
 }
 
 static void xdma_uio_pci_remove(struct pci_dev *dev) {}
