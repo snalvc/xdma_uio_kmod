@@ -28,6 +28,110 @@ static void pci_check_intr_pend(struct pci_dev *pdev) {
   }
 }
 
+/* Remap pci resources described by bar #pci_bar in uio resource n. */
+static int uio_setup_iomem(struct pci_dev *pdev, struct uio_info *info, int n,
+                           int pci_bar, const char *name) {
+  unsigned long addr, len;
+  void *internal_addr;
+
+  if (n >= ARRAY_SIZE(info->mem))
+    return -EINVAL;
+
+  addr = pci_resource_start(pdev, pci_bar);
+  len = pci_resource_len(pdev, pci_bar);
+  if (addr == 0 || len == 0)
+    return -1;
+  internal_addr = ioremap(addr, len);
+  if (internal_addr == NULL)
+    return -1;
+  info->mem[n].name = name;
+  info->mem[n].addr = addr;
+  info->mem[n].internal_addr = internal_addr;
+  info->mem[n].size = len;
+  info->mem[n].memtype = UIO_MEM_PHYS;
+  return 0;
+}
+
+/* Get pci port io resources described by bar #pci_bar in uio resource n. */
+static int uio_setup_ioport(struct pci_dev *pdev, struct uio_info *info, int n,
+                            int pci_bar, const char *name) {
+  unsigned long addr, len;
+
+  if (n >= ARRAY_SIZE(info->port))
+    return -EINVAL;
+
+  addr = pci_resource_start(pdev, pci_bar);
+  len = pci_resource_len(pdev, pci_bar);
+  if (addr == 0 || len == 0)
+    return -EINVAL;
+
+  info->port[n].name = name;
+  info->port[n].start = addr;
+  info->port[n].size = len;
+  info->port[n].porttype = UIO_PORT_X86;
+
+  return 0;
+}
+
+/* Unmap previously ioremap'd resources */
+static void igbuio_pci_release_iomem(struct uio_info *info) {
+  int i;
+
+  for (i = 0; i < MAX_UIO_MAPS; i++) {
+    if (info->mem[i].internal_addr)
+      iounmap(info->mem[i].internal_addr);
+  }
+}
+
+static int xdma_uio_setup_bars(struct pci_dev *pdev,
+                               struct xdma_uio_pci_dev *xuio) {
+  int i, iom, iop, ret;
+  unsigned long flags;
+  static const char *bar_names[PCI_STD_RESOURCE_END + 1] = {
+      "BAR0", "BAR1", "BAR2", "BAR3", "BAR4", "BAR5",
+  };
+
+  iom = 0;
+  iop = 0;
+
+  for (i = 0; i < ARRAY_SIZE(bar_names); i++) {
+    if (pci_resource_len(pdev, i) != 0 && pci_resource_start(pdev, i) != 0) {
+      flags = pci_resource_flags(pdev, i);
+      if (flags & IORESOURCE_MEM) {
+        ret = uio_setup_iomem(pdev, &xuio->info, iom, i, bar_names[i]);
+        if (ret != 0)
+          return ret;
+        iom++;
+      } else if (flags & IORESOURCE_IO) {
+        ret = uio_setup_ioport(pdev, &xuio->info, iop, i, bar_names[i]);
+        if (ret != 0)
+          return ret;
+        iop++;
+      }
+    }
+  }
+
+  return (iom != 0 || iop != 0) ? ret : -ENOENT;
+}
+
+#if KERNEL_VERSION(3, 5, 0) <= LINUX_VERSION_CODE
+static void pci_enable_capability(struct pci_dev *pdev, int cap) {
+  pcie_capability_set_word(pdev, PCI_EXP_DEVCTL, cap);
+}
+#else
+static void pci_enable_capability(struct pci_dev *pdev, int cap) {
+  u16 v;
+  int pos;
+
+  pos = pci_pcie_cap(pdev);
+  if (pos > 0) {
+    pci_read_config_word(pdev, pos + PCI_EXP_DEVCTL, &v);
+    v |= cap;
+    pci_write_config_word(pdev, pos + PCI_EXP_DEVCTL, v);
+  }
+}
+#endif
+
 static int xdma_uio_pci_probe(struct pci_dev *pdev,
                               const struct pci_device_id *id) {
   struct xdma_uio_pci_dev *udev;
@@ -59,10 +163,17 @@ static int xdma_uio_pci_probe(struct pci_dev *pdev,
   if (rv)
     pr_info("Failed to set PCI_EXP_DEVCTL_READRQ: %d.\n", rv);
 
+  /* remap IO memory */
+  rv = xdma_uio_setup_bars(pdev, udev);
+  if (rv != 0)
+    goto fail_release_iomem;
+
   return 0;
 
 out_free_udev:
   kfree(udev);
+fail_release_iomem:
+  igbuio_pci_release_iomem(&udev->info);
 
   return rv;
 }
