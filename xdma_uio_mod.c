@@ -168,6 +168,19 @@ static int xdma_uio_pci_probe(struct pci_dev *pdev,
   if (rv != 0)
     goto fail_release_iomem;
 
+  /* set 64-bit DMA mask */
+  rv = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
+  if (rv != 0) {
+    pr_err("Cannot set DMA mask\n");
+    goto fail_release_iomem;
+  }
+
+  rv = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
+  if (rv != 0) {
+    pr_err("Cannot set consistent DMA mask\n");
+    goto fail_release_iomem;
+  }
+
   return 0;
 
 out_free_udev:
