@@ -15,7 +15,7 @@
 struct xdma_uio_pci_dev {
   struct uio_info info;
   struct pci_dev *pdev;
-  // enum rte_intr_mode mode;
+  enum xdma_intr_mode intr_mode;
 };
 
 static void pci_check_intr_pend(struct pci_dev *pdev) {
@@ -166,27 +166,58 @@ static int xdma_uio_pci_probe(struct pci_dev *pdev,
   /* remap IO memory */
   rv = xdma_uio_setup_bars(pdev, udev);
   if (rv != 0)
-    goto fail_release_iomem;
+    goto out_free_udev;
 
   /* set 64-bit DMA mask */
   rv = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
   if (rv != 0) {
     pr_err("Cannot set DMA mask\n");
-    goto fail_release_iomem;
+    goto out_release_iomem;
   }
 
   rv = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
   if (rv != 0) {
     pr_err("Cannot set consistent DMA mask\n");
-    goto fail_release_iomem;
+    goto out_release_iomem;
+  }
+
+  /* fill uio infos */
+  udev->info.name = "xdma_uio";
+  udev->info.version = "0.1";
+  // udev->info.handler =
+  // udev->info.irqcontrol =
+  // udev->info.open =
+  // udev->info.release =
+  udev->info.priv = udev;
+  udev->pdev = pdev;
+
+  // Support MSI and legacy only
+  if (!pci_find_capability(pdev, PCI_CAP_ID_MSI) &&
+      !pci_intx_mask_supported(pdev)) {
+    pr_info("No interrupt\n");
+    udev->intr_mode = XDMA_INTR_MODE_NONE;
+  } else {
+    rv = pci_alloc_irq_vectors(pdev, 1, 1, PCI_IRQ_MSI | PCI_IRQ_LEGACY);
+    if (rv != 1) {
+      pr_err("Failed to allocate irq vector\n");
+      goto out_release_iomem;
+    }
+    if (pci_find_capability(pdev, PCI_CAP_ID_MSI))
+      udev->intr_mode = XDMA_INTR_MODE_MSI;
+    else
+      udev->intr_mode = XDMA_INTR_MODE_LEGACY;
+    udev->info.irq = pci_irq_vector(pdev, 0);
   }
 
   return 0;
-
+out_free_pci_irq:
+  if (udev->intr_mode != XDMA_INTR_MODE_NONE) {
+    pci_free_irq_vectors(pdev);
+  }
+out_release_iomem:
+  igbuio_pci_release_iomem(&udev->info);
 out_free_udev:
   kfree(udev);
-fail_release_iomem:
-  igbuio_pci_release_iomem(&udev->info);
 
   return rv;
 }
