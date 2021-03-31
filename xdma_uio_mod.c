@@ -132,6 +132,23 @@ static void pci_enable_capability(struct pci_dev *pdev, int cap) {
 }
 #endif
 
+static void pci_keep_intx_enabled(struct pci_dev *pdev) {
+  /* workaround to a h/w bug:
+   * when msix/msi become unavaile, default to legacy.
+   * However the legacy enable was not checked.
+   * If the legacy was disabled, no ack then everything stuck
+   */
+  u16 pcmd, pcmd_new;
+
+  pci_read_config_word(pdev, PCI_COMMAND, &pcmd);
+  pcmd_new = pcmd & ~PCI_COMMAND_INTX_DISABLE;
+  if (pcmd_new != pcmd) {
+    pr_info("%s: clear INTX_DISABLE, 0x%x -> 0x%x.\n", dev_name(&pdev->dev),
+            pcmd, pcmd_new);
+    pci_write_config_word(pdev, PCI_COMMAND, pcmd_new);
+  }
+}
+
 static int xdma_uio_pci_probe(struct pci_dev *pdev,
                               const struct pci_device_id *id) {
   struct xdma_uio_pci_dev *udev;
@@ -208,6 +225,7 @@ static int xdma_uio_pci_probe(struct pci_dev *pdev,
       udev->intr_mode = XDMA_INTR_MODE_LEGACY;
     udev->info.irq = pci_irq_vector(pdev, 0);
   }
+  pci_keep_intx_enabled(pdev);
 
   return 0;
 out_free_pci_irq:
