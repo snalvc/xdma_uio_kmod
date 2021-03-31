@@ -74,7 +74,7 @@ static int uio_setup_ioport(struct pci_dev *pdev, struct uio_info *info, int n,
 }
 
 /* Unmap previously ioremap'd resources */
-static void igbuio_pci_release_iomem(struct uio_info *info) {
+static void xdma_uio_pci_release_iomem(struct uio_info *info) {
   int i;
 
   for (i = 0; i < MAX_UIO_MAPS; i++) {
@@ -233,7 +233,7 @@ out_free_pci_irq:
     pci_free_irq_vectors(pdev);
   }
 out_release_iomem:
-  igbuio_pci_release_iomem(&udev->info);
+  xdma_uio_pci_release_iomem(&udev->info);
 out_free_udev:
   kfree(udev);
 
