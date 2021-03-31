@@ -227,6 +227,11 @@ static int xdma_uio_pci_probe(struct pci_dev *pdev,
   }
   pci_keep_intx_enabled(pdev);
 
+  /* register uio driver */
+  rv = uio_register_device(&pdev->dev, &udev->info);
+  if (rv != 0)
+    goto out_free_pci_irq;
+
   pci_set_drvdata(pdev, udev);
 
   return 0;
