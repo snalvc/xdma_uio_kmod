@@ -227,6 +227,8 @@ static int xdma_uio_pci_probe(struct pci_dev *pdev,
   }
   pci_keep_intx_enabled(pdev);
 
+  pci_set_drvdata(pdev, udev);
+
   return 0;
 out_free_pci_irq:
   if (udev->intr_mode != XDMA_INTR_MODE_NONE) {
@@ -240,7 +242,19 @@ out_free_udev:
   return rv;
 }
 
-static void xdma_uio_pci_remove(struct pci_dev *dev) {}
+static void xdma_uio_pci_remove(struct pci_dev *pdev) {
+  struct xdma_uio_pci_dev *udev =
+      (struct xdma_uio_pci_dev *)pci_get_drvdata(pdev);
+
+  uio_unregister_device(&udev->info);
+  if (udev->intr_mode != XDMA_INTR_MODE_NONE) {
+    pci_free_irq_vectors(pdev);
+  }
+  xdma_uio_pci_release_iomem(&udev->info);
+  pci_disable_device(pdev);
+  pci_set_drvdata(pdev, NULL);
+  kfree(udev);
+}
 
 static struct pci_driver xdma_uio_pci_driver = {
     .name = "xdma_uio",
